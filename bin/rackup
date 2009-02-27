@@ -9,12 +9,13 @@ env = "development"
 daemonize = false
 pid = nil
 options = {:Port => 9292, :Host => "0.0.0.0", :AccessLog => []}
+handler_options = {}
 
 # Don't evaluate CGI ISINDEX parameters.
 # http://hoohoo.ncsa.uiuc.edu/cgi/cl.html
 ARGV.clear  if ENV.include?("REQUEST_METHOD")
 
-opts = OptionParser.new("", 24, '  ') { |opts|
+opts = OptionParser.new("", 30, '  ') { |opts|
   opts.banner = "Usage: rackup [ruby options] [rack options] [rackup config]"
 
   opts.separator ""
@@ -46,7 +47,18 @@ opts = OptionParser.new("", 24, '  ') { |opts|
   opts.separator ""
   opts.separator "Rack options:"
   opts.on("-s", "--server SERVER", "serve using SERVER (webrick/mongrel)") { |s|
-    server = s
+    require 'rack'
+    server = Rack::Handler.get(s)
+    
+    # You only get expanded options if you explicitly choose the server type. Sorry.
+    if (server.respond_to? :options_parse)
+      opts.separator ""
+      opts.separator "Server options (#{server.class.name}):"
+
+      server.options_parse(opts, handler_options)
+      opts.separator ""
+      opts.separator ""
+    end
   }
 
   opts.on("-o", "--host HOST", "listen on HOST (default: 0.0.0.0)") { |host|
@@ -69,9 +81,6 @@ opts = OptionParser.new("", 24, '  ') { |opts|
     pid = File.expand_path(f)
   }
 
-  opts.separator ""
-  opts.separator "Common options:"
-
   opts.on_tail("-h", "--help", "Show this message") do
     puts opts
     exit
@@ -88,27 +97,11 @@ opts = OptionParser.new("", 24, '  ') { |opts|
 
 require 'pp'  if $DEBUG
 
-config = ARGV[0] || "config.ru"
-if !File.exist? config
-  abort "configuration #{config} not found"
-end
-
-if config =~ /\.ru$/
-  cfgfile = File.read(config)
-  if cfgfile[/^#\\(.*)/]
-    opts.parse! $1.split(/\s+/)
-  end
+unless server
   require 'rack'
-  inner_app = eval "Rack::Builder.new {( " + cfgfile + "\n )}.to_app",
-                   nil, config
-else
-  require 'rack'
-  require config
-  inner_app = Object.const_get(File.basename(config, '.rb').capitalize)
-end
 
-unless server = Rack::Handler.get(server)
-  # Guess.
+  # Make an initial stab at what type of server we want.
+  # The switching code below can override it.
   if ENV.include?("PHP_FCGI_CHILDREN")
     server = Rack::Handler::FastCGI
 
@@ -126,7 +119,24 @@ unless server = Rack::Handler.get(server)
   end
 end
 
-p server  if $DEBUG
+config = ARGV[0] || "config.ru"
+if !File.exist? config
+  abort "configuration #{config} not found"
+end
+
+if config =~ /\.ru$/
+  cfgfile = File.read(config)
+  require 'rack'
+  if cfgfile[/^#\\(.*)/]
+    opts.parse! $1.split(/\s+/)
+  end
+  inner_app = eval "Rack::Builder.new {( " + cfgfile + "\n )}.to_app",
+                   nil, config
+else
+  require config
+  require 'rack'
+  inner_app = Object.const_get(File.basename(config, '.rb').capitalize)
+end
 
 case env
 when "development"
@@ -172,5 +182,8 @@ if daemonize
     at_exit { File.delete(pid) if File.exist?(pid) }
   end
 end
+
+# merge in server-specific options
+options = handler_options.merge(options)
 
 server.run app, options

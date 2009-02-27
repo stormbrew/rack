@@ -8,7 +8,10 @@ module Rack
     class Mongrel < ::Mongrel::HttpHandler
       def self.run(app, options={})
         server = ::Mongrel::HttpServer.new(options[:Host] || '0.0.0.0',
-                                           options[:Port] || 8080)
+                                           options[:Port] || 8080,
+                                           options[:Processors] || 950,
+                                           options[:Throttle] || 0,
+                                           options[:Timeout] || 60)
         # Acts like Rack::URLMap, utilizing Mongrel's own path finding methods.
         # Use is similar to #run, replacing the app argument with a hash of 
         # { path=>app, ... } or an instance of Rack::URLMap.
@@ -32,6 +35,18 @@ module Rack
         end
         yield server  if block_given?
         server.run.join
+      end
+      
+      def self.options_parse(opts, options)
+        opts.on("-R", "--mongrel-processors NUM", "Number of concurrent processors to accept (default: 950)") do |n|
+          options[:Processors] = n.to_i
+        end
+        opts.on("-T", "--mongrel-timeout SECONDS", "Time before request is dropped for inactivity (default: 60)") do |s|
+          options[:Timeout] = s.to_i
+        end
+        opts.on("-B", "--mongrel-throttle TIME", "Throttle time between socket.accept calls in hundredths of a second (default: 0)") do |t|
+          options[:Throttle] = t.to_i
+        end
       end
 
       def initialize(app)
