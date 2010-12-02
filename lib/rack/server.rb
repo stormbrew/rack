@@ -3,6 +3,10 @@ require 'optparse'
 module Rack
   class Server
     class Options
+      def initialize(server)
+        @server = server
+      end
+      
       def parse!(args)
         options = {}
         opt_parser = OptionParser.new("", 24, '  ') do |opts|
@@ -47,6 +51,12 @@ module Rack
           opts.on("-p", "--port PORT", "use PORT (default: 9292)") { |port|
             options[:Port] = port
           }
+          
+          opts.on("-O", "--option NAME[=VALUE]", "pass VALUE to the server as option NAME. If no VALUE, sets it to true. Run '#{$0} -s SERVER -h' to get a list of options for SERVER") { |name|
+            name, value = name.split('=', 2)
+            value = true if value.nil?
+            options[name.to_sym] = value              
+          }
 
           opts.on("-E", "--env ENVIRONMENT", "use ENVIRONMENT for defaults (default: development)") { |e|
             options[:environment] = e
@@ -65,6 +75,8 @@ module Rack
 
           opts.on_tail("-h", "--help", "Show this message") do
             puts opts
+            puts handler_opts(options)
+            
             exit
           end
 
@@ -76,6 +88,28 @@ module Rack
         opt_parser.parse! args
         options[:config] = args.last if args.last
         options
+      end
+      
+      def handler_opts(options)
+        begin
+          info = []
+          server = Rack::Handler.get(options[:server]) || Rack::Handler.default(options)
+          if server && server.respond_to?(:valid_options)
+            info << ""
+            info << "Server-specific options for #{server.name}:"
+          
+            has_options = false
+            server.valid_options.each do |name, description|
+              next if name.to_s.match(/^(Host|Port)[^a-zA-Z]/) # ignore handler's host and port options, we do our own.
+              info << "  -O %-21s %s" % [name, description]
+              has_options = true
+            end
+            return "" if !has_options
+          end
+          info.join("\n")
+        rescue NameError
+          return "Warning: Could not find handler specified (#{options[:server] || 'default'}) to determine handler-specific options"
+        end
       end
     end
 
@@ -242,7 +276,7 @@ module Rack
       end
 
       def opt_parser
-        Options.new
+        Options.new(self)
       end
 
       def build_app(app)
